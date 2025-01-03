@@ -61,6 +61,8 @@ from ultralytics.nn.modules import (
     Segment,
     WorldDetect,
     v10Detect,
+    stem,
+    MBConvBlock,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -960,8 +962,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         m = getattr(torch.nn, m[3:]) if "nn." in m else globals()[m]  # get module
         for j, a in enumerate(args):
             if isinstance(a, str):
-                with contextlib.suppress(ValueError):
+                try:
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
+                except ValueError:
+                    pass
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
         if m in {
             Classify,
@@ -1038,6 +1042,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             if m is HGBlock:
                 args.insert(4, n)  # number of repeats
                 n = 1
+        elif m in [stem, MBConvBlock]:
+            c1, c2 = ch[f], args[0]
+            if c2 != nc:
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c2, *args[1:]]
         elif m is ResNetLayer:
             c2 = args[1] if args[3] else args[1] * 4
         elif m is nn.BatchNorm2d:
@@ -1139,16 +1148,24 @@ def guess_model_task(model):
 
     # Guess from model cfg
     if isinstance(model, dict):
-        with contextlib.suppress(Exception):
+        try:
             return cfg2task(model)
+        except Exception:
+            pass
+
     # Guess from PyTorch model
     if isinstance(model, nn.Module):  # PyTorch model
         for x in "model.args", "model.model.args", "model.model.model.args":
-            with contextlib.suppress(Exception):
+            try:
                 return eval(x)["task"]
+            except Exception:
+                pass
         for x in "model.yaml", "model.model.yaml", "model.model.model.yaml":
-            with contextlib.suppress(Exception):
+            try:
                 return cfg2task(eval(x))
+            except Exception:
+                pass
+
         for m in model.modules():
             if isinstance(m, Segment):
                 return "segment"
